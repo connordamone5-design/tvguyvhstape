@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Play / Embed Installer (loop)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; padding: 24px; background:#f7f8fb; color:#111; }
+    .card { background:white; border-radius:12px; padding:18px; box-shadow:0 6px 18px rgba(20,30,50,0.06); max-width:900px; margin:auto; }
+    input[type=text] { width:100%; padding:8px 10px; border-radius:8px; border:1px solid #ddd; font-size:14px; }
+    .media-wrap { margin-top:16px; display:flex; gap:12px; flex-direction:column; align-items:stretch; }
+    .notice { font-size:13px; color:#555; margin-top:8px; }
+    .danger { color:#9b1c1c; font-weight:600; }
+    button { padding:8px 12px; border-radius:8px; border:0; background:#2563eb; color:white; cursor:pointer; }
+    iframe, video, audio { width:100%; border-radius:8px; border:1px solid #e6e9ef; }
+    .download { display:inline-block; padding:8px 10px; background:#111827; color:white; border-radius:8px; text-decoration:none; margin-top:8px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Embed & loop player</h2>
+    <p>This page will attempt to detect the file type at the URL and either play it in a loop (audio/video) or embed it. Browsers will not execute installers (.exe); they only download them.</p>
+
+    <label for="url">Resource URL</label>
+    <input id="url" type="text"
+      value="https://cdn.jsdelivr.net/gh/connordamone5-design/Idkdd.git/" />
+
+    <div style="margin-top:10px">
+      <button id="loadBtn">Load & play</button>
+      <label style="margin-left:12px"><input id="autoplayToggle" type="checkbox" checked /> Autoplay (may be blocked by browser)</label>
+      <label style="margin-left:12px"><input id="loopToggle" type="checkbox" checked /> Loop</label>
+    </div>
+
+    <div id="status" class="notice"></div>
+    <div id="output" class="media-wrap" aria-live="polite"></div>
+
+    <p class="notice">
+      If CORS prevents automatic detection, the script will fallback to embedding the URL in an <code>&lt;iframe&gt;</code>.
+    </p>
+    <p class="notice danger">
+      If the resource is an installer (e.g. .exe/.msi), the browser will only download it — it will not run it here.
+    </p>
+  </div>
+
+  <script>
+    const loadBtn = document.getElementById('loadBtn');
+    const urlInput = document.getElementById('url');
+    const status = document.getElementById('status');
+    const output = document.getElementById('output');
+    const autoplayToggle = document.getElementById('autoplayToggle');
+    const loopToggle = document.getElementById('loopToggle');
+
+    function clearOutput(){
+      output.innerHTML = '';
+      status.textContent = '';
+    }
+
+    function makeInfo(text){
+      status.textContent = text;
+    }
+
+    function createDownloadLink(u, name){
+      const a = document.createElement('a');
+      a.href = u;
+      a.className = 'download';
+      a.textContent = 'Download file (' + (name || 'resource') + ')';
+      a.setAttribute('download', '');
+      a.target = '_blank';
+      return a;
+    }
+
+    async function tryHead(url){
+      try {
+        const resp = await fetch(url, { method: 'HEAD', mode: 'cors' });
+        if (!resp.ok) throw new Error('HEAD returned ' + resp.status);
+        return resp;
+      } catch (e) {
+        // head likely blocked by CORS or not allowed
+        return null;
+      }
+    }
+
+    loadBtn.addEventListener('click', async () => {
+      clearOutput();
+      let resourceUrl = urlInput.value.trim();
+      if (!resourceUrl) {
+        makeInfo('Enter a URL first.');
+        return;
+      }
+
+      makeInfo('Checking resource (HEAD)...');
+
+      const head = await tryHead(resourceUrl);
+
+      // prefer content-type from HEAD if available
+      let contentType = head?.headers?.get?.('content-type') || '';
+      let filename = null;
+      let disposition = head?.headers?.get?.('content-disposition') || '';
+
+      // try to infer filename from URL:
+      try {
+        const u = new URL(resourceUrl);
+        const parts = u.pathname.split('/');
+        if (parts.length && parts[parts.length-1]) filename = decodeURIComponent(parts[parts.length-1]);
+      } catch(e){}
+
+      // If HEAD not allowed or no content-type, try GET (small attempt)
+      if ((!contentType || contentType === '') && !head) {
+        makeInfo('HEAD blocked by CORS or unavailable. Falling back to embed. If playback fails, change the URL to the direct media file inside the repo (e.g. .../file.mp4).');
+        // fallback: embed in iframe
+        const iframe = document.createElement('iframe');
+        iframe.src = resourceUrl;
+        iframe.height = '500';
+        iframe.loading = 'lazy';
+        iframe.sandbox = ''; // remove sandbox if you need scripts; left blank means sandbox enabled
+        output.appendChild(iframe);
+        output.appendChild(createDownloadLink(resourceUrl, filename));
+        return;
+      }
+
+      contentType = contentType.toLowerCase();
+      makeInfo('Content-Type: ' + (contentType || 'unknown'));
+
+      const autoplay = autoplayToggle.checked;
+      const loop = loopToggle.checked;
+
+      // handle audio
+      if (contentType.startsWith('audio/') || resourceUrl.match(/\.(mp3|ogg|wav|m4a|aac|flac)$/i)) {
+        const audio = document.createElement('audio');
+        audio.controls = true;
+        audio.loop = loop;
+        audio.autoplay = autoplay;
+        audio.src = resourceUrl;
+        audio.preload = 'auto';
+        output.appendChild(audio);
+        makeInfo('Audio element created. If autoplay is blocked by browser, press play.');
+        return;
+      }
+
+      // handle video
+      if (contentType.startsWith('video/') || resourceUrl.match(/\.(mp4|webm|ogv|mov|mkv)$/i)) {
+        const video = document.createElement('video');
+        video.controls = true;
+        video.loop = loop;
+        video.autoplay = autoplay;
+        video.muted = true; // many browsers allow autoplay if muted
+        video.playsInline = true;
+        video.src = resourceUrl;
+        video.style.maxHeight = '640px';
+        output.appendChild(video);
+        makeInfo('Video element created. It is muted to improve autoplay chances. Unmute after load if you want sound.');
+        return;
+      }
+
+      // other common web types (pdf, html)
+      if (contentType.includes('pdf') || resourceUrl.match(/\.(pdf)$/i)) {
+        const iframe = document.createElement('iframe');
+        iframe.src = resourceUrl;
+        iframe.height = '700';
+        output.appendChild(iframe);
+        makeInfo('PDF embedded.');
+        return;
+      }
+
+      if (contentType.includes('text/html') || resourceUrl.match(/\.(html|htm)$/i)) {
+        const iframe = document.createElement('iframe');
+        iframe.src = resourceUrl;
+        iframe.height = '700';
+        output.appendChild(iframe);
+        makeInfo('HTML page embedded.');
+        return;
+      }
+
+      // binary / installer / unknown -> provide download and explanation
+      makeInfo('Resource appears to be a binary or unknown type. Browser cannot execute installers directly; use the download link below to save and run on your machine.');
+      output.appendChild(createDownloadLink(resourceUrl, filename));
+      // also embed in iframe as fallback (may trigger a download)
+      const iframe = document.createElement('iframe');
+      iframe.src = resourceUrl;
+      iframe.height = '120';
+      output.appendChild(iframe);
+    });
+  </script>
+</body>
+</html>
